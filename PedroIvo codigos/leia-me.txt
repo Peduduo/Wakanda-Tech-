@@ -1,1 +1,167 @@
-Pasta para códigos do robô
+import motor_pair, math, runloop, motor
+from hub import port, motion_sensor
+import time
+ 
+ 
+# --- Configuração dos motores ---
+motor_esquerdo = port.A
+motor_direito = port.B
+motor_pair.pair(motor_pair.PAIR_1, motor_esquerdo, motor_direito)
+ 
+# --- Parâmetros físicos do robô ---
+raio_roda_cm = 2.8
+circunferencia_roda = 2 * math.pi * raio_roda_cm
+bitola = 12.5
+ 
+# --- PID ---
+Kp = 2
+Ki = 0.015
+Kd = 0.6
+erro_passado = 0
+soma_erros = 0
+ 
+# --- Velocidade máxima do motor em graus por segundo ---
+VEL_MAX_SPIKE = 1000
+VEL_MAX_GRAUS_S = 1050
+ 
+def spike_para_graus_por_seg(vel_spike):
+    """Converte velocidade Spike (0-1000) para graus por segundo"""
+    return vel_spike * VEL_MAX_GRAUS_S / VEL_MAX_SPIKE
+ 
+def graus_por_seg_para_spike(vel_graus_s):
+    """Converte graus por segundo para velocidade Spike (0-1000)"""
+    return vel_graus_s * VEL_MAX_SPIKE / VEL_MAX_GRAUS_S
+ 
+# ---------------------------------------------------
+# MOVIMENTO RETO COM PID
+# ---------------------------------------------------
+async def mover_em_linha_cm(distancia_cm, velocidade_base_spike):
+    global erro_passado, soma_erros
+    Kp_local = velocidade_base_spike / 502
+    Ki_local = velocidade_base_spike / 6946.44444444
+    Kd = velocidade_base_spike / 193.833333333
+    motion_sensor.reset_yaw(0)
+    erro_passado = 0
+    soma_erros = 0
+ 
+    direcao = 1 if distancia_cm >= 0 else -1
+    Ki_local = Ki if direcao == 1 else 0.005
+ 
+    rotacoes_roda = abs(distancia_cm) / circunferencia_roda
+    graus_totais = rotacoes_roda * 360
+ 
+    vel_base_graus_s = spike_para_graus_por_seg(velocidade_base_spike)
+ 
+    inicio = time.ticks_ms()
+    graus_percorridos = 0
+    tempo_anterior = inicio
+ 
+    while graus_percorridos < graus_totais:
+        angulo_atual = motion_sensor.tilt_angles()[0]
+ 
+        erro = -angulo_atual if direcao == 1 else angulo_atual
+        soma_erros += erro
+        variacao_erro = erro - erro_passado
+ 
+        ajuste = Kp_local * erro + Ki_local * soma_erros + Kd * variacao_erro
+        ajuste = max(min(ajuste, 1000), -1000)
+ 
+        vel_esq = graus_por_seg_para_spike(vel_base_graus_s - ajuste)
+        vel_dir = graus_por_seg_para_spike(vel_base_graus_s + ajuste)
+ 
+        motor_pair.move_tank(
+            motor_pair.PAIR_1,
+            int(direcao * vel_esq),
+            int(direcao * vel_dir)
+        )
+ 
+        tempo_atual = time.ticks_ms()
+        delta_t = time.ticks_diff(tempo_atual, tempo_anterior) / 1000
+ 
+        graus_percorridos += vel_base_graus_s * delta_t
+ 
+        tempo_anterior = tempo_atual
+        erro_passado = erro
+ 
+        await runloop.sleep_ms(5)
+ 
+    motor_pair.stop(motor_pair.PAIR_1)
+    return graus_totais / vel_base_graus_s
+ 
+# ------------------
+# CURVAS
+# ------------------
+def curva_simples(angulo, raio_cm, velocidade_motor):
+    rad = math.radians(angulo)
+    arco = (abs(angulo) / 360) * math.pi * abs(raio_cm)
+    circ_roda = 2 * math.pi * 2.8
+    rotacao_motor = (2 * arco / circ_roda) * 360
+    tempo_execucao = abs(rotacao_motor / velocidade_motor) * (75.89 / 20)
+ 
+    print("\n🔹 Curva Simples: {}°, tempo estimado = {:.2f}s".format(angulo, tempo_execucao))
+ 
+    if angulo < 0:
+        motor_pair.move_tank_for_degrees(
+            motor_pair.PAIR_1, int(rotacao_motor),
+            int(-velocidade_motor), int(velocidade_motor)
+        )
+    else:
+        motor_pair.move_tank_for_degrees(
+            motor_pair.PAIR_1, int(rotacao_motor),
+            int(velocidade_motor), int(-velocidade_motor)
+        )
+    return tempo_execucao
+ 
+def curva_com_bitola(angulo, raio_cm, velocidade_externa, lado):
+    bitola_local = 15
+    raio_interno = raio_cm - (bitola_local / 2)
+    raio_externo = raio_cm + (bitola_local / 2)
+ 
+    arco_interno = (abs(angulo) / 360) * 2 * math.pi * raio_interno
+    arco_externo = (abs(angulo) / 360) * 2 * math.pi * raio_externo
+ 
+    circ_roda = 2 * math.pi * 2.8
+    rotacao_interna = (arco_interno / circ_roda) * 360
+    rotacao_externa = (arco_externo / circ_roda) * 360
+ 
+    velocidade_interna = velocidade_externa * (rotacao_interna / rotacao_externa)
+ 
+    print("\n🔹 Curva com Bitola: {}°, executando...".format(angulo))
+ 
+    if lado.lower() == "direita":
+        motor_pair.move_tank_for_degrees(
+            motor_pair.PAIR_1, int(rotacao_externa),
+            int(velocidade_externa), int(velocidade_interna)
+        )
+    elif lado.lower() == "esquerda":
+        motor_pair.move_tank_for_degrees(
+            motor_pair.PAIR_1, int(rotacao_externa),
+            int(velocidade_interna), int(velocidade_externa)
+        )
+    else:
+        print("⚠️ Lado inválido! Use 'direita' ou 'esquerda'.")
+ 
+# ------------------
+# EXECUÇÃO PRINCIPAL
+# ------------------
+async def main():
+    await mover_em_linha_cm(25, 800)
+    time.sleep(1)
+    curva_simples(-55, 7.5, 600)#Ajeita-se para missão 9
+    time.sleep(1)
+    motor.run(port.D, 100)
+    time.sleep(1.1)
+    motor.stop(port.D)
+    time.sleep(0.5)
+   
+ 
+    await mover_em_linha_cm(30, 800)#Dirige-se para missão 9
+    time.sleep(1)
+    curva_simples(-50, 7.5, 600) #Executa segunda parte da missão 9
+    time.sleep(1)
+    await mover_em_linha_cm(25, 400)
+    time.sleep(1)
+    await mover_em_linha_cm(--25, 700)#Executa segunda parte da missão 10
+    time.sleep(1)
+runloop.run(main())
+ 
