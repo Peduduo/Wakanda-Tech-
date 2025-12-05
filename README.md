@@ -15,7 +15,7 @@ Nossa estratégia consiste em realizar as missões agrupadas por saídas.
 
 
 ## 💡 Projeto de Inovação
-Estamos desenvolvendo uma solução inteligente para  monitoramento de artefatos que previni a danos muitas vezes permanentes.
+Estamos desenvolvendo uma solução inteligente para  monitoramento de artefatos que previne danos muitas vezes permanentes.
 Você pode ver mais detalhes na pasta `projeto_inovacao`.
 
 ## 📸 Galeria
